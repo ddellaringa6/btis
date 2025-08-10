@@ -22,34 +22,14 @@
       display: flex; min-height: 100vh; align-items: center; justify-content: center; padding: 24px;
     }
     .wrap { width: 100%; max-width: 900px; }
-    header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
-    h1 { font-size: 1.6rem; margin: 0; letter-spacing: .2px; }
-    .pill { padding: 6px 10px; border-radius: 999px; background: #0f1630; color: var(--muted); font-weight: 600; border: 1px solid #1a2447; }
-    .grid { display: grid; grid-template-columns: 1.2fr .8fr; gap: 16px; }
-    .card { background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(0,0,0,0.12)), var(--card); border: 1px solid #1a2447; border-radius: 14px; padding: 18px; }
-    .score { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: center; }
-    .big { text-align: center; padding: 24px 12px; border-radius: 12px; background: #0f1630; border: 1px solid #1a2447; }
-    .big h2 { font-size: 3.5rem; margin: 6px 0 4px; line-height: 1; }
-    .big small { color: var(--muted); }
-    .meter { height: 16px; border-radius: 999px; background: #0e142a; border: 1px solid #1a2447; overflow: hidden; }
-    .bar { height: 100%; width: 0%; background: linear-gradient(90deg, var(--danger), var(--warn), var(--accent)); transition: width .8s ease; }
-    .kvs { display: grid; grid-template-columns: repeat(2,1fr); gap: 10px; }
-    .kv { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; padding: 10px 12px; border-radius: 10px; background: #0f1630; border: 1px solid #1a2447; }
-    .kv b { color: var(--muted); font-weight: 600; }
-    .kv span { justify-self: end; font-variant-numeric: tabular-nums; font-weight: 700; }
-    footer { margin-top: 18px; color: var(--muted); font-size: .9rem; display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;}
-    a { color: var(--accent2); text-decoration: none; }
-    .legend { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-    .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); border: 1px solid #1a2447; }
-    @media (max-width: 820px){
-      .grid { grid-template-columns: 1fr; }
-      .score { grid-template-columns: 1fr; }
-    }
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <header>
+   <header>
+  <h1>Bitcoin Top Indicator Score (BTIS)</h1>
+  <div style="display:flex; gap:8px; align-items:center;">
+    <button id="settingsBtn" class="pill" title="Set API key for MVRV">Settings</button>
+    <span class="pill" id="last-updated">—</span>
+  </div>
+</header>
+
       <h1>Bitcoin Top Indicator Score (BTIS)</h1>
       <span class="pill" id="last-updated">—</span>
     </header>
@@ -81,29 +61,143 @@
     </footer>
   </div>
 <script>
-async function loadBTIS(){
-  const res = await fetch('data/btis.json?_=' + Date.now());
-  const data = await res.json();
-  const score = Math.round(data.btis);
-  document.getElementById('btis').textContent = score;
-  document.getElementById('last-updated').textContent = 'Updated ' + new Date(data.generated_at).toLocaleString();
-  const meter = document.getElementById('meter');
-  meter.style.width = score + '%';
-  const risk = document.getElementById('risk');
-  if(score >= 70) risk.textContent = 'High top risk (overheated)';
-  else if(score >= 40) risk.textContent = 'Moderate caution';
-  else risk.textContent = 'Low top risk';
-  // components
-  const c = document.getElementById('components');
-  c.innerHTML = '';
-  for (const row of data.components){
-    const el = document.createElement('div');
-    el.className = 'kv';
-    el.innerHTML = `<b>${row.name}</b><div>${row.detail}</div><span>${row.normalized.toFixed(0)}</span>`;
-    c.appendChild(el);
+<script>
+const $ = (id)=>document.getElementById(id);
+
+// --- Utils ---
+async function jget(url) {
+  const res = await fetch(url, {headers:{'Accept':'application/json'}});
+  if (!res.ok) throw new Error('HTTP '+res.status+' for '+url);
+  return res.json();
+}
+function rsi(vals, period=14){
+  const g=[], l=[];
+  for(let i=1;i<vals.length;i++){
+    const d=vals[i]-vals[i-1];
+    g.push(Math.max(d,0)); l.push(Math.abs(Math.min(d,0)));
+  }
+  if(g.length<period) return null;
+  let ag=g.slice(0,period).reduce((a,b)=>a+b,0)/period;
+  let al=l.slice(0,period).reduce((a,b)=>a+b,0)/period;
+  let out=null;
+  for(let i=period;i<g.length;i++){
+    ag=(ag*(period-1)+g[i])/period; al=(al*(period-1)+l[i])/period;
+    const rs=al===0?Infinity:ag/al; out=100-100/(1+rs);
+  }
+  return out;
+}
+const norm=(v,lo,hi)=> v==null?null:Math.max(0,Math.min(100,100*(v-lo)/(hi-lo)));
+function wmean(pairs){
+  const ok=pairs.filter(([v,w])=>v!=null && w>0);
+  const tw=ok.reduce((s,[,w])=>s+w,0); return ok.reduce((s,[v,w])=>s+v*w,0)/tw;
+}
+function setRisk(score){
+  const risk=$('risk'); if(score>=70) risk.textContent='High top risk (overheated)';
+  else if(score>=40) risk.textContent='Moderate caution'; else risk.textContent='Low top risk';
+}
+
+// --- Settings (Glassnode key stored locally) ---
+function getKey(){ try{return localStorage.getItem('GN_KEY')||'';}catch{ return ''; } }
+function setKey(k){ try{ localStorage.setItem('GN_KEY',k||''); }catch{} }
+function setupSettings(){
+  $('settingsBtn').onclick=()=>{
+    const cur=getKey();
+    const k=prompt('Paste your Glassnode API key (leave blank to remove):', cur||'');
+    if (k!==null){ setKey(k.trim()); loadLiveBTIS(true); }
+  };
+}
+
+// --- Data fetchers (browser-friendly) ---
+async function getCoinCapCloses(days=1095){
+  const now=Date.now(), start=now-days*24*60*60*1000;
+  const url=`https://api.coincap.io/v2/assets/bitcoin/history?interval=d1&start=${start}&end=${now}`;
+  const j=await jget(url);
+  return j.data.map(d=>parseFloat(d.priceUsd));
+}
+async function getFearGreed(){
+  const j=await jget('https://api.alternative.me/fng/?limit=1');
+  return parseFloat(j.data[0].value); // 0..100
+}
+async function getFunding(){
+  // Binance Futures public endpoint (usually OK from browsers)
+  const j=await jget('https://fapi.binance.com/fapi/v1/fundingRate?symbol=BTCUSDT&limit=1');
+  if (!j || !j.length) return null;
+  return parseFloat(j[0].fundingRate)*100; // % per 8h
+}
+async function getMVRV(){
+  const key=getKey(); if(!key) return null;
+  const url=`https://api.glassnode.com/v1/metrics/market/mvrv_z_score?a=BTC&i=1d&api_key=${encodeURIComponent(key)}`;
+  const j=await jget(url);
+  // last non-null value
+  for(let i=j.length-1;i>=0;i--) if(j[i].v!=null) return parseFloat(j[i].v);
+  return null;
+}
+
+// --- Main loader ---
+async function loadLiveBTIS(force=false){
+  try{
+    // Fetch in parallel
+    const [closes, fg, funding, mvrv] = await Promise.all([
+      getCoinCapCloses(1095),
+      getFearGreed(),
+      getFunding().catch(()=>null),
+      getMVRV().catch(()=>null)
+    ]);
+
+    const last = closes[closes.length-1];
+    const rsiVal = rsi(closes.slice(-250),14);
+    const rsiN = norm(rsiVal,30,80);
+    const logs = closes.filter(p=>p>0).map(Math.log);
+    const pricePct = norm(Math.log(last), Math.min(...logs), Math.max(...logs));
+
+    // Build components (include only those that resolved)
+    const comps=[];
+    comps.push({name:'RSI(14)', normalized:rsiN, detail:rsiVal?.toFixed(2) ?? '—'});
+    comps.push({name:'Fear & Greed', normalized:fg, detail:String(Math.round(fg))});
+    comps.push({name:'Price vs Log Range', normalized:pricePct, detail:`${Math.round(pricePct)} pctile`});
+    if (Number.isFinite(funding)) comps.push({name:'Funding Rate (8h %)', normalized:norm(funding,0.0,0.10), detail:`${funding.toFixed(4)}%`});
+    if (Number.isFinite(mvrv)) comps.push({name:'MVRV Z-Score', normalized:norm(mvrv,0.0,9.0), detail:mvrv.toFixed(2)});
+
+    // Weights (original ratios): RSI .20, F&G .20, Price .20, Funding .15, MVRV .25
+    const weights = {'RSI(14)':0.20,'Fear & Greed':0.20,'Price vs Log Range':0.20,'Funding Rate (8h %)':0.15,'MVRV Z-Score':0.25};
+    const pairs = comps.map(c=>[c.normalized, weights[c.name]||0]);
+    const btis = wmean(pairs);
+
+    // Update UI
+    const score = Math.round(btis);
+    $('btis').textContent = score;
+    $('last-updated').textContent = 'Updated ' + new Date().toLocaleString();
+    $('meter').style.width = score + '%';
+    setRisk(score);
+
+    const c=$('components'); c.innerHTML='';
+    for (const row of comps){
+      const el=document.createElement('div');
+      el.className='kv';
+      el.innerHTML=`<b>${row.name}</b><div>${row.detail}</div><span>${row.normalized!=null?row.normalized.toFixed(0):'—'}</span>`;
+      c.appendChild(el);
+    }
+  }catch(e){
+    console.error('Live load failed', e);
+    if (!force) {
+      // fallback: show bundled JSON if present
+      try{
+        const res=await fetch('data/btis.json'); const data=await res.json();
+        const score=Math.round(data.btis);
+        $('btis').textContent=score; $('last-updated').textContent='Updated '+new Date(data.generated_at).toLocaleString();
+        $('meter').style.width=score+'%'; setRisk(score);
+        const c=$('components'); c.innerHTML='';
+        for(const row of data.components){
+          const el=document.createElement('div'); el.className='kv';
+          el.innerHTML=`<b>${row.name}</b><div>${row.detail}</div><span>${row.normalized!=null?row.normalized.toFixed(0):'—'}</span>`;
+          c.appendChild(el);
+        }
+      }catch(_){}
+    }
   }
 }
-loadBTIS();
+setupSettings();
+loadLiveBTIS();
 </script>
 </body>
 </html>
