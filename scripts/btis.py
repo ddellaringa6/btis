@@ -1,22 +1,24 @@
 #!/usr/bin/env python3
 """
-BTIS updater (no MVRV; Bitstamp OHLC for price history)
-- Price history: Bitstamp daily OHLC (BTCUSD) – no API key
+BTIS updater (no MVRV; CoinCap for price history)
+- Price history: CoinCap daily history (BTC) – no API key
 - Sentiment: Alternative.me Fear & Greed (0–100)
-- Funding: Binance Futures last funding (BTCUSDT) – no key
+- Funding: Binance Futures last funding (BTCUSDT)
 - RSI(14) from closes; price percentile from log(closes)
 Writes data/btis.json
 """
-import os, math, json, datetime, urllib.request, urllib.parse
+import os, math, json, datetime, urllib.request, urllib.parse, time
 
-BITSTAMP_OHLC = "https://www.bitstamp.net/api/v2/ohlc/btcusd/"
+COINCAP_HISTORY = "https://api.coincap.io/v2/assets/bitcoin/history"
 FEARGREED_API = "https://api.alternative.me/fng/?limit=1"
 BINANCE_FUNDING_LAST = "https://fapi.binance.com/fapi/v1/fundingRate?symbol=BTCUSDT&limit=1"
 
 OUTFILE = os.path.join(os.path.dirname(__file__), "..", "data", "btis.json")
 
 def http_get_json(url, headers=None):
-    req = urllib.request.Request(url, headers=headers or {"User-Agent":"btis-bot"})
+    h = {"User-Agent":"btis-bot"}
+    if headers: h.update(headers)
+    req = urllib.request.Request(url, headers=h)
     with urllib.request.urlopen(req, timeout=30) as r:
         return json.loads(r.read().decode("utf-8"))
 
@@ -50,13 +52,15 @@ def weighted_mean(pairs):
     tw = sum(w for _,w in vals)
     return sum(v*w for v,w in vals) / tw
 
-def fetch_bitstamp_daily(limit=1000):
-    # returns up to 1000 daily candles (~3 years); that's enough for RSI/log percentile
-    params = {"step":"86400","limit":str(limit)}
-    url = BITSTAMP_OHLC + "?" + urllib.parse.urlencode(params)
+def fetch_coincap_daily(days=1095):
+    # ~3 years of daily data (CoinCap interval d1)
+    now = int(time.time()*1000)
+    start = now - days*24*60*60*1000
+    params = {"interval":"d1","start":str(start),"end":str(now)}
+    url = COINCAP_HISTORY + "?" + urllib.parse.urlencode(params)
     j = http_get_json(url)
-    data = j.get("data", {}).get("ohlc", [])
-    closes = [float(row["close"]) for row in data]
+    data = j.get("data", [])
+    closes = [float(row["priceUsd"]) for row in data]
     return closes
 
 def fetch_feargreed():
@@ -69,7 +73,7 @@ def fetch_funding_last():
     return float(j[0]["fundingRate"]) * 100  # percent per 8h
 
 def compute_components():
-    closes = fetch_bitstamp_daily(1000)
+    closes = fetch_coincap_daily(1095)  # ~3 years
     last_close = closes[-1]
 
     rsi_val = rsi(closes[-250:], 14)
@@ -78,8 +82,8 @@ def compute_components():
     logs = [math.log(p) for p in closes if p > 0]
     price_pct = normalize(math.log(last_close), min(logs), max(logs))
 
-    feargreed = fetch_feargreed()               # 0–100
-    funding_pct_8h = fetch_funding_last()       # % per 8h
+    feargreed = fetch_feargreed()
+    funding_pct_8h = fetch_funding_last()
     funding_norm = normalize(funding_pct_8h, 0.0, 0.10)
 
     components = [
@@ -111,3 +115,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
