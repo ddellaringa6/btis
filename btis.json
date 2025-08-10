@@ -1,0 +1,31 @@
+{
+  "btis": 54.05,
+  "components": [
+    {
+      "name": "RSI(14)",
+      "normalized": 56,
+      "detail": "56.10"
+    },
+    {
+      "name": "MVRV Z-Score",
+      "normalized": 43,
+      "detail": "2.58"
+    },
+    {
+      "name": "Fear & Greed",
+      "normalized": 73,
+      "detail": "73"
+    },
+    {
+      "name": "Price vs Log Range",
+      "normalized": 65,
+      "detail": "65 pctile"
+    },
+    {
+      "name": "Funding Rate (8h %)",
+      "normalized": 30,
+      "detail": "0.0100%"
+    }
+  ],
+  "generated_at": "2025-08-10T16:59:58.342878Z"
+}
